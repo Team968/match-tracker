@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Team 968 Match Tracker</title>
+<style>
+  :root { --bg:#0f1218; --card:#1a1f2b; --text:#e8ecf3; --muted:#8b95a7; --red:#d64550; --blue:#3a7bd5; --gold:#f5c542; --green:#3fb871; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--text); }
+  header { padding:16px 20px; display:flex; flex-wrap:wrap; gap:8px 20px; align-items:baseline; border-bottom:1px solid #262c3a; }
+  h1 { margin:0; font-size:1.4rem; }
+  .status { color:var(--muted); font-size:.85rem; }
+  main { max-width:1100px; margin:0 auto; padding:16px; display:grid; gap:16px; }
+  section { background:var(--card); border-radius:12px; padding:16px; }
+  h2 { margin:0 0 12px; font-size:1.1rem; }
+  .alliances { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  @media (max-width:700px){ .alliances{grid-template-columns:1fr;} }
+  .alliance { border-radius:10px; padding:12px; border:2px solid; }
+  .alliance.red { border-color:var(--red); background:rgba(214,69,80,.08); }
+  .alliance.blue { border-color:var(--blue); background:rgba(58,123,213,.08); }
+  .alliance h3 { margin:0 0 8px; font-size:.95rem; text-transform:uppercase; letter-spacing:.05em; }
+  .team { padding:8px 0; border-top:1px solid #ffffff14; }
+  .team:first-of-type { border-top:0; }
+  .team .name { font-weight:600; }
+  .team.us .name { color:var(--gold); }
+  .team .meta { color:var(--muted); font-size:.82rem; margin-top:2px; }
+  .chips { display:flex; flex-wrap:wrap; gap:4px; margin-top:6px; }
+  .chip { font-size:.78rem; padding:2px 7px; border-radius:6px; background:#ffffff12; }
+  .chip.w { background:rgba(63,184,113,.25); } .chip.l { background:rgba(214,69,80,.25); }
+  .tag { display:inline-block; font-size:.75rem; padding:2px 8px; border-radius:99px; background:var(--gold); color:#000; font-weight:700; }
+  table { width:100%; border-collapse:collapse; font-size:.9rem; }
+  th,td { text-align:left; padding:6px 8px; border-bottom:1px solid #ffffff14; }
+  th { color:var(--muted); font-weight:500; }
+  td.r { color:#ff8b94; } td.b { color:#8fb8f5; }
+  .win { font-weight:700; text-decoration:underline; }
+  tr.next td { background:rgba(245,197,66,.1); }
+  .result-w { color:var(--green); font-weight:700; } .result-l { color:var(--red); font-weight:700; } .result-t{color:var(--muted);}
+  .notes { margin-top:6px; font-size:.82rem; font-style:italic; }
+  details { margin-top:6px; font-size:.8rem; }
+  summary { cursor:pointer; color:var(--muted); }
+  .scoutrow { margin:6px 0; padding:6px; background:#ffffff08; border-radius:6px; }
+  .kv { display:inline-block; margin:1px 10px 1px 0; } .kv .k { color:var(--muted); }
+  .msg { padding:20px; text-align:center; color:var(--muted); }
+  input,button { font:inherit; padding:8px 10px; border-radius:8px; border:1px solid #333b4d; background:#12161f; color:var(--text); }
+  button { background:var(--blue); border-color:var(--blue); cursor:pointer; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Team 968 Match Tracker</h1>
+  <span class="status" id="event"></span>
+  <span class="status" id="updated"></span>
+</header>
+<main id="app"><div class="msg">Loading…</div></main>
+
+<script src="config.js"></script>
+<script>
+const C = Object.assign({ TBA_KEY:"", TEAM:"frc968", EVENT_KEY:"", REFRESH_SECONDS:60 }, window.CONFIG);
+const BASE = "https://www.thebluealliance.com/api/v3";
+const LEVEL_ORDER = { qm:0, ef:1, qf:2, sf:3, f:4 };
+const LEVEL_NAME = { qm:"Qualification", ef:"Eighth-final", qf:"Quarterfinal", sf:"Semifinal", f:"Final" };
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const num = k => k.replace("frc","");
+
+function getKey() {
+  if (DEMO) return "demo";
+  if (C.TBA_KEY) return C.TBA_KEY;
+  try { return localStorage.getItem("tba_key") || ""; } catch { return ""; }
+}
+
+// ---- Demo mode: open index.html?demo to use fake data (no API key needed) ----
+const DEMO = new URLSearchParams(location.search).has("demo");
+let demoMatches = null;
+function buildDemo() {
+  const pool = [];
+  for (let i = 0; i < 40; i++) pool.push("frc" + (100 + i * 37));
+  const pick = (n) => { const a = []; while (a.length < n) { const t = pool[Math.floor(Math.random()*pool.length)]; if (t !== "frc968" && !a.includes(t)) a.push(t); } return a; };
+  const ms = [];
+  for (let i = 1; i <= 8; i++) {
+    const withUs = i % 2 === 1; // 968 plays odd-numbered matches
+    const us = pick(2).concat("frc968"), mate = pick(3), opp = pick(3);
+    const red = withUs ? us : mate, blue = withUs ? opp : us;
+    ms.push({ key:`2026demo_qm${i}`, comp_level:"qm", set_number:1, match_number:i,
+      time: Math.floor(Date.now()/1000) + i*600,
+      alliances:{ red:{team_keys: i%4<2 ? red : blue, score:-1}, blue:{team_keys: i%4<2 ? blue : red, score:-1} } });
+  }
+  return ms;
+}
+function demoPlayNext() {
+  const next = demoMatches.find(m => m.alliances.red.score < 0 && m.alliances.blue.team_keys.concat(m.alliances.red.team_keys).includes("frc968"));
+  if (!next) return;
+  // fill in every unplayed match up to and including 968's next one
+  for (const m of demoMatches) {
+    if (m.alliances.red.score < 0) {
+      m.score_breakdown = {};
+      for (const s of ["red","blue"]) {
+        const auto = Math.floor(Math.random()*30), tele = 20 + Math.floor(Math.random()*70), foul = Math.floor(Math.random()*3)*5;
+        m.alliances[s].score = auto + tele + foul;
+        m.score_breakdown[s] = { autoPoints:auto, teleopPoints:tele, foulPoints:foul, totalPoints:auto+tele+foul, rp:Math.floor(Math.random()*4) };
+      }
+    }
+    if (m === next) break;
+  }
+  refresh();
+}
+function demoFetch(path) {
+  if (!demoMatches) demoMatches = buildDemo();
+  if (path.endsWith("/simple") && !path.endsWith("/teams/simple")) return { name:"DEMO Event (fake data)" };
+  if (path.endsWith("/teams/simple")) {
+    const keys = new Set(demoMatches.flatMap(m => m.alliances.red.team_keys.concat(m.alliances.blue.team_keys)));
+    return [...keys].map(k => ({ key:k, team_number:+num(k), nickname: k==="frc968" ? "RAWC" : "Demo Team " + num(k), city:"Springfield", state_prov:"CA", country:"USA" }));
+  }
+  if (path.endsWith("/oprs")) {
+    const o = { oprs:{}, dprs:{}, ccwms:{} };
+    demoMatches.forEach(m => m.alliances.red.team_keys.concat(m.alliances.blue.team_keys).forEach(k => { if (!(k in o.oprs)) { o.oprs[k] = 20+Math.random()*40; o.dprs[k] = 20+Math.random()*40; o.ccwms[k] = o.oprs[k]-o.dprs[k]; } }));
+    return o;
+  }
+  if (path.endsWith("/matches")) return JSON.parse(JSON.stringify(demoMatches));
+  return null;
+}
+
+async function tba(path) {
+  if (DEMO) return demoFetch(path);
+  const r = await fetch(BASE + path, { headers: { "X-TBA-Auth-Key": getKey() } });
+  if (r.status === 401) throw new Error("BAD_KEY");
+  if (!r.ok) throw new Error(`TBA error ${r.status} on ${path}`);
+  return r.json();
+}
+
+function askForKey(errMsg) {
+  $("app").innerHTML = `<section><h2>Blue Alliance API key needed</h2>
+    <p class="status">${errMsg || "Create a Read API key at thebluealliance.com/account and paste it below."}</p>
+    <input id="k" size="60" placeholder="TBA read key"> <button id="save">Save</button></section>`;
+  $("save").onclick = () => {
+    const v = $("k").value.trim();
+    if (!v) return;
+    try { localStorage.setItem("tba_key", v); } catch {}
+    refresh();
+  };
+}
+
+// ---- Scouting spreadsheet ----
+function parseCSV(text) {
+  const rows = []; let row = [], f = "", q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) { if (c === '"') { if (text[i+1] === '"') { f += '"'; i++; } else q = false; } else f += c; }
+    else if (c === '"') q = true;
+    else if (c === ",") { row.push(f); f = ""; }
+    else if (c === "\n" || c === "\r") { if (c === "\r" && text[i+1] === "\n") i++; row.push(f); f = ""; rows.push(row); row = []; }
+    else f += c;
+  }
+  if (f !== "" || row.length) { row.push(f); rows.push(row); }
+  return rows;
+}
+
+const isBlank = v => { const s = String(v ?? "").trim().toUpperCase(); return s === "" || s === "NA" || s === "N/A"; };
+let sheetStatus = "";
+
+function demoSheet() {
+  const q = s => `"${s}"`;
+  const lines = ["Timestamp,Scout,Team Number,Match Number,Alliance,Auto Points,Teleop Points,Notes"];
+  for (let n = 1; n <= 8; n++) for (const t of [968, 322, 507, 396, 655, 803, 1506, 1099]) {
+    lines.push([ "10/8/2026 12:00", "Demo", t, n, n%2 ? "RED" : "BLUE", Math.floor(Math.random()*20), Math.floor(Math.random()*60), q(t === 968 ? "Demo scouting note: fast cycles, strong defense in the neutral zone." : "")].join(","));
+  }
+  return lines.join("\n");
+}
+
+async function loadScouting() {
+  if (!DEMO && !C.SHEET_ID && !C.SHEET_CSV_URL) return null;
+  let text;
+  if (DEMO) text = demoSheet();
+  else {
+    const url = C.SHEET_CSV_URL || `https://docs.google.com/spreadsheets/d/${C.SHEET_ID}/gviz/tq?tqx=out:csv&gid=${C.SHEET_GID}`;
+    try { text = await (await fetch(url)).text(); }
+    catch { throw new Error("couldn't reach the scouting sheet (is it shared as 'Anyone with the link: Viewer'?)"); }
+    if (text.trimStart().startsWith("<")) throw new Error("scouting sheet is private — share it as 'Anyone with the link: Viewer'");
+  }
+  const rows = parseCSV(text).filter(r => r.some(c => c.trim() !== ""));
+  if (rows.length < 2) return {};
+  const seen = {};
+  const header = rows[0].map((h, i) => { h = h.trim() || `Column ${i+1}`; seen[h] = (seen[h]||0)+1; return seen[h] > 1 ? `${h} (${seen[h]})` : h; });
+  const body = rows.slice(1);
+  const numericRatio = i => body.filter(r => /^\d{1,5}$/.test((r[i]||"").trim())).length / body.length;
+  const find = (pat, want) => header.findIndex(h => h.toLowerCase().includes(pat.toLowerCase())) ;
+
+  let teamIdx = C.SHEET_TEAM_COL ? find(C.SHEET_TEAM_COL) : -1;
+  if (teamIdx < 0) {
+    const cands = header.map((h,i)=>i).filter(i => /team/i.test(header[i]) && numericRatio(i) > 0.8);
+    teamIdx = cands.length ? cands[0] : -1;
+  }
+  if (teamIdx < 0) throw new Error("couldn't find the team-number column in the sheet — set SHEET_TEAM_COL in config.js");
+  let matchIdx = C.SHEET_MATCH_COL ? find(C.SHEET_MATCH_COL) : header.findIndex(h => /match/i.test(h));
+
+  const byTeam = {};
+  body.forEach(r => {
+    const n = (r[teamIdx]||"").trim();
+    if (!/^\d+$/.test(n)) return;
+    const fields = header.map((h,i) => [h, (r[i]||"").trim()]).filter(([h,v],i) => i !== teamIdx && !isBlank(v));
+    const match = matchIdx >= 0 ? (r[matchIdx]||"").trim() : "";
+    (byTeam["frc"+n] ||= []).push({ match, fields });
+  });
+  return byTeam;
+}
+
+function scoutHtml(entries) {
+  if (!entries?.length) return `<div class="meta">No scouting data</div>`;
+  const notes = [];
+  entries.forEach(e => e.fields.forEach(([h,v]) => { if (v.length > 25 && !/^\d/.test(v)) notes.push(`${e.match ? "M"+e.match+": " : ""}${v}`); }));
+  const detail = entries.map((e,i) => `<div class="scoutrow"><b>${esc(e.match ? "Match " + e.match : "Entry " + (i+1))}</b><br>${
+    e.fields.map(([h,v]) => `<span class="kv"><span class="k">${esc(h)}:</span> ${esc(v)}</span>`).join("")}</div>`).join("");
+  return `<div class="meta">Scouted in ${entries.length} entr${entries.length>1?"ies":"y"}</div>
+    ${notes.length ? `<div class="notes">${notes.map(n => `<div>“${esc(n)}”</div>`).join("")}</div>` : ""}
+    <details><summary>All scouting data</summary>${detail}</details>`;
+}
+
+async function findEvent() {
+  if (DEMO) return "2026demo";
+  if (C.EVENT_KEY) return C.EVENT_KEY;
+  const year = new Date().getFullYear();
+  const events = await tba(`/team/${C.TEAM}/events/${year}/simple`);
+  if (!events.length) throw new Error(`No ${year} events found for ${C.TEAM}.`);
+  events.sort((a,b) => a.start_date.localeCompare(b.start_date));
+  const today = new Date().toISOString().slice(0,10);
+  const live = events.find(e => e.start_date <= today && today <= e.end_date);
+  if (live) return live.key;
+  const upcoming = events.find(e => e.start_date > today);
+  if (upcoming) return upcoming.key;
+  return events[events.length-1].key;
+}
+
+const sortMatches = ms => ms.sort((a,b) =>
+  LEVEL_ORDER[a.comp_level]-LEVEL_ORDER[b.comp_level] || a.set_number-b.set_number || a.match_number-b.match_number);
+const played = m => m.alliances.red.score >= 0 && m.alliances.blue.score >= 0;
+const label = m => m.comp_level === "qm" ? `Qual ${m.match_number}` :
+  `${LEVEL_NAME[m.comp_level]} ${m.comp_level==="f" ? m.match_number : `${m.set_number} Match ${m.match_number}`}`;
+const sideOf = (m, team) => m.alliances.red.team_keys.includes(team) ? "red" : m.alliances.blue.team_keys.includes(team) ? "blue" : null;
+
+function teamStats(team, matches) {
+  const rows = matches.filter(m => played(m) && sideOf(m, team)).map(m => {
+    const side = sideOf(m, team), other = side === "red" ? "blue" : "red";
+    const mine = m.alliances[side].score, theirs = m.alliances[other].score;
+    return { m, mine, theirs, res: mine > theirs ? "w" : mine < theirs ? "l" : "t" };
+  });
+  const avg = rows.length ? rows.reduce((s,r)=>s+r.mine,0)/rows.length : null;
+  // score_breakdown is per ALLIANCE (not per robot), so these are alliance averages
+  rows.forEach(r => { r.bd = r.m.score_breakdown?.[sideOf(r.m, team)] || null; });
+  const field = f => {
+    const v = rows.map(r => r.bd?.[f]).filter(x => typeof x === "number");
+    return v.length ? v.reduce((a,b)=>a+b,0)/v.length : null;
+  };
+  return { rows, avg, auto: field("autoPoints"), teleop: field("teleopPoints"), foul: field("foulPoints") };
+}
+
+// Driver station = the team's position in its alliance's team list (1-3)
+const station = (m, team) => { const s = sideOf(m, team); return s ? `${s[0].toUpperCase()+s.slice(1)} ${m.alliances[s].team_keys.indexOf(team)+1}` : ""; };
+const f1 = v => v === null || v === undefined ? "–" : v.toFixed(1);
+
+function teamCard(team, matches, ranks, nextMatch, info) {
+  const { rows, avg, auto, teleop, foul } = teamStats(team, matches);
+  const rk = ranks[team];
+  const t = info.teams[team], o = info.oprs?.[team];
+  const chips = rows.map(r => {
+    const d = r.bd ? ` | Auto ${r.bd.autoPoints ?? "?"}, Teleop ${r.bd.teleopPoints ?? "?"}, Fouls ${r.bd.foulPoints ?? "?"}` : "";
+    return `<span class="chip ${r.res}" title="${esc(label(r.m) + d)}">${esc(label(r.m).replace("Qualification","Q"))}: ${r.mine}–${r.theirs}</span>`;
+  }).join("");
+  return `<div class="team ${team===C.TEAM?"us":""}">
+    <div class="name">Team ${esc(num(team))}${t?.nickname ? " – " + esc(t.nickname) : ""} <span class="tag">${esc(station(nextMatch, team))}</span></div>
+    ${t ? `<div class="meta">${esc([t.city, t.state_prov, t.country].filter(Boolean).join(", "))}</div>` : ""}
+    <div class="meta">${rk ? `Rank ${rk.rank} · Record ${rk.record}` : "Unranked"}${o ? ` · OPR ${f1(o.opr)} · DPR ${f1(o.dpr)} · CCWM ${f1(o.ccwm)}` : ""}</div>
+    <div class="meta">${avg===null ? "No matches played yet" : `Avg alliance score ${avg.toFixed(1)} (${rows.length} match${rows.length>1?"es":""})${auto!==null ? ` · Auto ${f1(auto)} · Teleop ${f1(teleop)} · Fouls ${f1(foul)}` : ""}`}</div>
+    <div class="chips">${chips}</div>
+    ${info.scout ? scoutHtml(info.scout[team]) : ""}</div>`;
+}
+
+function render(eventKey, eventInfo, matches, rankings, teamList, oprs, scout) {
+  const info = { scout, teams: {}, oprs: oprs?.oprs ? Object.fromEntries(Object.keys(oprs.oprs).map(k => [k, { opr:oprs.oprs[k], dpr:oprs.dprs?.[k], ccwm:oprs.ccwms?.[k] }])) : null };
+  (teamList || []).forEach(t => { info.teams[t.key] = t; });
+  const ranks = {};
+  (rankings?.rankings || []).forEach(r => {
+    const w = r.record;
+    ranks[r.team_key] = { rank:r.rank, record: w ? `${w.wins}-${w.losses}-${w.ties}` : "" };
+  });
+  sortMatches(matches);
+  const ours = matches.filter(m => sideOf(m, C.TEAM));
+  const next = ours.find(m => !played(m));
+  $("event").textContent = `${eventInfo.name || eventKey} (${eventKey})`;
+
+  let html = "";
+  if (next) {
+    const mySide = sideOf(next, C.TEAM);
+    const t = next.predicted_time || next.time;
+    html += `<section><h2>Next match: ${esc(label(next))} <span class="tag">${mySide.toUpperCase()}</span></h2>
+      ${t ? `<div class="status" style="margin-bottom:10px">Scheduled ${new Date(t*1000).toLocaleString()}</div>` : ""}
+      <div class="alliances">${["red","blue"].map(side => `
+        <div class="alliance ${side}"><h3>${side} alliance — ${side===mySide?"with us":"against us"}</h3>
+        ${next.alliances[side].team_keys.map(t => teamCard(t, matches, ranks, next, info)).join("")}</div>`).join("")}
+      </div>
+      <div class="status" style="margin-top:10px">Team 968 drives from <b>${esc(station(next, C.TEAM))}</b>. Auto/teleop/foul numbers are alliance averages from TBA's score breakdown.</div></section>`;
+  } else {
+    html += `<section><div class="msg">${ours.length ? "No more scheduled matches for Team 968 at this event." : "No matches scheduled yet for Team 968 at this event."}</div></section>`;
+  }
+
+  html += `<section><h2>Team 968 matches</h2><table><thead><tr><th>Match</th><th>Station</th><th>Red</th><th>Blue</th><th>Score</th><th>Our auto</th><th>Our teleop</th><th>Our fouls</th><th>RP</th><th>Result</th></tr></thead><tbody>
+    ${ours.map(m => {
+      const side = sideOf(m, C.TEAM), p = played(m);
+      const rs = m.alliances.red.score, bs = m.alliances.blue.score;
+      const res = !p ? "—" : (m.alliances[side].score > m.alliances[side==="red"?"blue":"red"].score) ? `<span class="result-w">WIN</span>` :
+        (m.alliances[side].score < m.alliances[side==="red"?"blue":"red"].score) ? `<span class="result-l">LOSS</span>` : `<span class="result-t">TIE</span>`;
+      const fmt = (ks) => ks.map(k => k===C.TEAM ? `<b>${num(k)}</b>` : num(k)).join(", ");
+      const bd = p ? m.score_breakdown?.[side] : null;
+      const cell = v => `<td>${v ?? "–"}</td>`;
+      return `<tr class="${m===next?"next":""}"><td>${esc(label(m))}</td><td>${esc(station(m, C.TEAM))}</td>
+        <td class="r">${fmt(m.alliances.red.team_keys)}</td><td class="b">${fmt(m.alliances.blue.team_keys)}</td>
+        <td>${p ? `<span class="${rs>bs?"win":""}" style="color:#ff8b94">${rs}</span> – <span class="${bs>rs?"win":""}" style="color:#8fb8f5">${bs}</span>` : "—"}</td>${cell(bd?.autoPoints)}${cell(bd?.teleopPoints)}${cell(bd?.foulPoints)}${cell(bd?.rp)}<td>${res}</td></tr>`;
+    }).join("")}
+    </tbody></table></section>`;
+  $("app").innerHTML = html;
+}
+
+async function refresh() {
+  if (!getKey()) return askForKey();
+  try {
+    const eventKey = await findEvent();
+    sheetStatus = "";
+    const [info, matches, rankings, teamList, oprs, scout] = await Promise.all([
+      tba(`/event/${eventKey}/simple`),
+      tba(`/event/${eventKey}/matches`),
+      tba(`/event/${eventKey}/rankings`).catch(() => null),
+      tba(`/event/${eventKey}/teams/simple`).catch(() => []),
+      tba(`/event/${eventKey}/oprs`).catch(() => null),
+      loadScouting().catch(e => { sheetStatus = ` · Scouting sheet: ${e.message}`; return null; }),
+    ]);
+    render(eventKey, info, matches, rankings, teamList, oprs, scout);
+    $("updated").textContent = `Updated ${new Date().toLocaleTimeString()} · refreshes every ${C.REFRESH_SECONDS}s${sheetStatus}`;
+  } catch (e) {
+    if (e.message === "BAD_KEY") {
+      try { localStorage.removeItem("tba_key"); } catch {}
+      return askForKey("That API key was rejected. Please enter a valid one.");
+    }
+    $("updated").textContent = `Update failed (${e.message}) — retrying in ${C.REFRESH_SECONDS}s`;
+    if (!$("app").querySelector("section")) $("app").innerHTML = `<div class="msg">${esc(e.message)}</div>`;
+  }
+}
+
+if (DEMO) {
+  const b = document.createElement("button");
+  b.textContent = "Demo: play 968's next match";
+  b.onclick = demoPlayNext;
+  document.querySelector("header").appendChild(b);
+}
+refresh();
+setInterval(() => { if (getKey()) refresh(); }, C.REFRESH_SECONDS * 1000);
+</script>
+</body>
+</html>
